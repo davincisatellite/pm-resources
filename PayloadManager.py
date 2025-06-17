@@ -1,11 +1,13 @@
 import serial
 import subprocess
 import shlex
-import time
+import select
+
 from Constants import SerialConfig
 
 def run_command(command_str: str) -> bytes:
-    
+    '''Executes a shell command and returns the output over uart.'''
+
     try:
         command_parts = shlex.split(command_str)
     except ValueError:
@@ -34,34 +36,33 @@ def run_command(command_str: str) -> bytes:
     except Exception as e:
         return f"An error occurred: {e}".encode(SerialConfig.ENCODING)
 
+def listener(ser):
+    '''Listens for commands from the serial port and executes them.'''
+
+    while True:
+        rdevices, _, _ = select.select([ser], [], [], 1.0)
+        if ser in rdevices:
+            command_bytes = ser.readline()
+            if command_bytes:
+                command_str = command_bytes.decode(SerialConfig.ENCODING).strip()
+                if command_str:
+                    output_bytes = run_command(command_str)
+                    if output_bytes:
+                        ser.write(output_bytes)
+                        ser.write(b'\n')
+                        ser.flush()
 
 def main():
+    '''Main function to set up the serial port and start listening for commands.'''
+
     ser = None
     try:
         ser = serial.Serial(SerialConfig.TTY_PORT, SerialConfig.BAUD_RATE, timeout=SerialConfig.TIMEOUT)
-        time.sleep(1) 
+
         ser.reset_input_buffer()
 
+        listener(ser)
 
-        # listener loop
-        while True:
-            command_bytes = ser.readline()
-            
-            if not command_bytes:
-                continue
-
-            command_str = command_bytes.decode(SerialConfig.ENCODING).strip()
-
-            if command_str:
-                output_bytes = run_command(command_str)
-
-                # Send the output back 
-                if output_bytes:
-                    ser.write(output_bytes)
-                    ser.write(b'\n') 
-                    ser.flush()
-
-            time.sleep(1) 
     except serial.SerialException as e:
         print(f"Serial error: {e}")
     except Exception as e:
