@@ -3,7 +3,9 @@ import subprocess
 import shlex
 import select
 
-from Constants import SerialConfig
+from Constants import SerialConfig, DiceConfig
+import DicePayload
+
 
 def run_command(command_str: str) -> bytes:
     '''Executes a shell command and returns the output over uart.'''
@@ -36,9 +38,10 @@ def run_command(command_str: str) -> bytes:
     except Exception as e:
         return f"An error occurred: {e}".encode(SerialConfig.ENCODING)
 
+
 def listener(ser):
     '''Listens for commands from the serial port and executes them.'''
-
+    dp = DicePayload.DicePayload()
     while True:
         rdevices, _, _ = select.select([ser], [], [], 1.0)
         if ser in rdevices:
@@ -46,11 +49,34 @@ def listener(ser):
             if command_bytes:
                 command_str = command_bytes.decode(SerialConfig.ENCODING).strip()
                 if command_str:
-                    output_bytes = run_command(command_str)
+                    
+                    # Temporary to test dice
+                    if command_str == DiceConfig.CMD_LED_ON:
+                        dp.led_on()
+                        output_bytes = b"LED turned on"
+                    elif command_str == DiceConfig.CMD_LED_OFF:
+                        dp.led_off()
+                        output_bytes = b"LED turned off"
+                    elif command_str == DiceConfig.CMD_CLAMP:
+                        dp.clamp()
+                        output_bytes = b"Clamped"
+                    elif command_str == DiceConfig.CMD_UNCLAMP:
+                        dp.unclamp()
+                        output_bytes = b"Unclamped"
+                    elif command_str == DiceConfig.CMD_STOP_M1_M2:
+                        dp.stop_m1_m2()
+                        output_bytes = b"Motors stopped"
+                    elif command_str == DiceConfig.CMD_RUN_M1_CCW_M2_CCW:
+                        dp.run_m1_ccw_m2_ccw()
+                        output_bytes = b"Motors running CCW"
+                    else :
+                        output_bytes = run_command(command_str)
+
                     if output_bytes:
                         ser.write(output_bytes)
                         ser.write(b'\n')
                         ser.flush()
+
 
 def main():
     '''Main function to set up the serial port and start listening for commands.'''
@@ -66,7 +92,7 @@ def main():
     except serial.SerialException as e:
         print(f"Serial error: {e}")
     except Exception as e:
-        print(f"An unexpected error occurred: {e}")
+        print(f"An error occurred: {e}")
     finally:
         if ser and ser.is_open:
             ser.close()
