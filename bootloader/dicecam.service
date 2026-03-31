@@ -1,0 +1,19 @@
+# /etc/systemd/system/dicecam.service
+[Unit]
+Description=Dice payload camera capture service
+# After=multi-user.target
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=debian
+WorkingDirectory=/opt/dicepayload
+ExecStart=/usr/bin/python3 /opt/dicepayload/DiceCamService.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
