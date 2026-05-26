@@ -1,16 +1,73 @@
-## Payload Manager (PM)
+# Payload Manager
 
 This repository houses scripts and other resources related to the Payload Manager & Hyperion OBC.
 
-## Lab Test Setup
+## What it does
 
-Step by step setup procedure. Use Windows.
+- Runs `payload_manager.py` as the `debian` user under systemd.
+- Handles UART commands for DICE, telemetry, camera, and bootloader provisioning.
+- Delegates bootloader changes to the root-owned helper `provision_boot.sh`.
+- Supports both `grub` and `uboot` targets through `payload_manager.yaml`.
 
-1. Connect USB1_DEVICE and USB_D8 to your computer with cables. For a pictoral representation refer to the manual _How do you connect the OBC to the Computer_ at the WebDrive Location: `/361K`.
-2. Run the `START_OBC400.bat` script using the samba tools, located at `/3630` in the Webdrive.
-3. Press the RESET_MAIN button.
-4. Linux should now be booting.
-5. Use PuTTy to open UART (use Device Manager to find the correct COM port). Set the Baud to 115200 for shell or 9600 for power statistics, with the connection type as Serial.
-6. Login on the linux shell:
-   - username: `debian`
-   - password: `DaVinci21! `
+## Deploy on the board
+
+1. Copy this directory to the board, then run:
+   - `sudo ./install.sh`
+2. Confirm the helper and sudo rule were installed:
+   - `ls -l /opt/dvs/provision_boot.sh`
+   - `sudo -l -U debian | grep provision_boot`
+3. Confirm the service is running:
+   - `systemctl status dvs-payload.service`
+
+## UART command
+
+Send this over the payload UART:
+
+- `OBC_PROVISION_BOOT`
+
+Expected responses:
+
+- `OK BOOT_PROVISIONED`
+- `OK BOOT_ALREADY_AUTONOMOUS`
+- `ERR elevated permissions failed`
+- `ERR provisioning failed`
+
+The command reads the bootloader section in `payload_manager.yaml`, then calls `/opt/dvs/provision_boot.sh` via the narrow sudoers rule installed by `install.sh`.
+
+## Validate on the board
+
+### GRUB target
+
+1. Set `bootloader.target_type: grub` in `payload_manager.yaml`.
+2. Make sure `/etc/default/grub` exists.
+3. Send `OBC_PROVISION_BOOT` over UART.
+4. Verify the result:
+   - `grep -E '^GRUB_TIMEOUT=0$|^GRUB_TIMEOUT_STYLE=hidden$' /etc/default/grub`
+   - `sudo update-grub`
+   - `journalctl -u dvs-payload.service -b | tail -50`
+
+### U-Boot target
+
+1. Set `bootloader.target_type: uboot` in `payload_manager.yaml`.
+2. Make sure `fw_setenv` and `fw_printenv` are installed.
+3. Send `OBC_PROVISION_BOOT` over UART.
+4. Verify the result:
+   - `fw_printenv bootdelay`
+   - `journalctl -u dvs-payload.service -b | tail -50`
+
+## Manual helper test
+
+Run the helper directly as root for a dry validation of the privileged path:
+
+- `sudo /opt/dvs/provision_boot.sh --target grub --dry-run`
+- `sudo /opt/dvs/provision_boot.sh --target uboot --dry-run`
+
+## Runtime log locations
+
+- File log: `/var/log/payload_manager.log`
+- systemd journal: `journalctl -u dvs-payload.service`
+
+## Re-run after changes
+
+- `sudo systemctl restart dvs-payload.service`
+- `journalctl -u dvs-payload.service -f`

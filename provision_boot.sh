@@ -46,6 +46,9 @@ die()   { echo -e "${RED}[BOOT-PROV] FATAL:${RESET} $*" >&2; exit "${2:-3}"; }
 # ─── Argument parsing ─────────────────────────────────────────────────────────
 TARGET=""
 DRY_RUN=false
+GRUB_CONFIG_PATH="/etc/default/grub"
+TIMEOUT_VALUE="0"
+BOOTDELAY_VALUE="0"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -53,12 +56,24 @@ while [[ $# -gt 0 ]]; do
             TARGET="${2:-}"
             shift 2
             ;;
+        --grub-config-path)
+            GRUB_CONFIG_PATH="${2:-}"
+            shift 2
+            ;;
+        --timeout-value)
+            TIMEOUT_VALUE="${2:-}"
+            shift 2
+            ;;
+        --bootdelay-value)
+            BOOTDELAY_VALUE="${2:-}"
+            shift 2
+            ;;
         --dry-run)
             DRY_RUN=true
             shift
             ;;
         --help|-h)
-            echo "Usage: sudo $0 --target {uboot|grub} [--dry-run]"
+            echo "Usage: sudo $0 --target {uboot|grub} [--grub-config-path PATH] [--timeout-value N] [--bootdelay-value N] [--dry-run]"
             exit 0
             ;;
         *)
@@ -111,12 +126,12 @@ provision_uboot() {
         current_delay=$("${fw_printenv}" bootdelay 2>/dev/null | cut -d= -f2 || true)
     fi
 
-    if [[ "${current_delay}" == "0" ]]; then
-        ok "Already provisioned: bootdelay=0 (idempotent)"
+    if [[ "${current_delay}" == "${BOOTDELAY_VALUE}" ]]; then
+        ok "Already provisioned: bootdelay=${BOOTDELAY_VALUE} (idempotent)"
         exit 4
     fi
 
-    info "Current bootdelay='${current_delay:-unknown}' → setting to 0"
+    info "Current bootdelay='${current_delay:-unknown}' → setting to ${BOOTDELAY_VALUE}"
 
     # ── Backup current env to a timestamped file ──────────────────────────────
     local backup_dir="/opt/dvs/bootloader_backups"
@@ -138,22 +153,22 @@ provision_uboot() {
 
     # ── Apply: set bootdelay=0 ────────────────────────────────────────────────
     if [[ "${DRY_RUN}" == false ]]; then
-        if ! "${fw_setenv}" bootdelay 0; then
-            die "fw_setenv bootdelay 0 failed" 3
+        if ! "${fw_setenv}" bootdelay "${BOOTDELAY_VALUE}"; then
+            die "fw_setenv bootdelay ${BOOTDELAY_VALUE} failed" 3
         fi
-        ok "U-Boot bootdelay set to 0"
+        ok "U-Boot bootdelay set to ${BOOTDELAY_VALUE}"
 
         # Verify the write was accepted
         if [[ -n "${fw_printenv}" ]]; then
             local verified
             verified=$("${fw_printenv}" bootdelay 2>/dev/null | cut -d= -f2 || true)
-            if [[ "${verified}" != "0" ]]; then
+            if [[ "${verified}" != "${BOOTDELAY_VALUE}" ]]; then
                 die "Verification failed: bootdelay is '${verified}' after write" 3
             fi
             ok "Verified: bootdelay=${verified}"
         fi
     else
-        info "[DRY-RUN] Would execute: ${fw_setenv} bootdelay 0"
+        info "[DRY-RUN] Would execute: ${fw_setenv} bootdelay ${BOOTDELAY_VALUE}"
         info "[DRY-RUN] Would verify via ${fw_printenv:-fw_printenv} bootdelay"
     fi
 }
@@ -162,7 +177,6 @@ provision_uboot() {
 # GRUB provisioning (x86 / development hosts only — NOT the flight OBC)
 # ═══════════════════════════════════════════════════════════════════════════════
 provision_grub() {
-    local grub_cfg="/etc/default/grub"
     local update_grub
     update_grub=$(command -v update-grub 2>/dev/null || true)
 
@@ -170,16 +184,17 @@ provision_grub() {
         die "update-grub not found — is this an x86 system with GRUB installed?" 2
     fi
 
-    if [[ ! -f "${grub_cfg}" ]]; then
-        die "${grub_cfg} not found — GRUB does not appear to be installed" 2
+    if [[ ! -f "${GRUB_CONFIG_PATH}" ]]; then
+        die "${GRUB_CONFIG_PATH} not found — GRUB does not appear to be installed" 2
     fi
 
     info "Target: GRUB (x86)"
-    info "Config: ${grub_cfg}"
+    info "Config: ${GRUB_CONFIG_PATH}"
 
     # ── Check idempotent ─────────────────────────────────────────────────────
-    if grep -qE '^GRUB_TIMEOUT=0$' "${grub_cfg}"; then
-        ok "Already provisioned: GRUB_TIMEOUT=0 (idempotent)"
+    if grep -qE "^GRUB_TIMEOUT=${TIMEOUT_VALUE}$" "${GRUB_CONFIG_PATH}" && \
+       grep -qE '^GRUB_TIMEOUT_STYLE=hidden$' "${GRUB_CONFIG_PATH}"; then
+        ok "Already provisioned: GRUB_TIMEOUT=${TIMEOUT_VALUE} and GRUB_TIMEOUT_STYLE=hidden (idempotent)"
         exit 4
     fi
 
@@ -191,10 +206,10 @@ provision_grub() {
 
     if [[ "${DRY_RUN}" == false ]]; then
         mkdir -p "${backup_dir}"
-        cp "${grub_cfg}" "${backup_file}"
+        cp "${GRUB_CONFIG_PATH}" "${backup_file}"
         ok "GRUB config backed up to ${backup_file}"
     else
-        info "[DRY-RUN] Would back up ${grub_cfg} to ${backup_file}"
+        info "[DRY-RUN] Would back up ${GRUB_CONFIG_PATH} to ${backup_file}"
     fi
 
     # ── Atomically patch GRUB_TIMEOUT ────────────────────────────────────────
@@ -204,12 +219,12 @@ provision_grub() {
     trap 'rm -f "${tmpfile}"' EXIT
 
     # Replace existing GRUB_TIMEOUT=<anything> or add it if missing
-    if grep -qE '^GRUB_TIMEOUT=' "${grub_cfg}"; then
-        sed 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=0/' "${grub_cfg}" > "${tmpfile}"
+    if grep -qE '^GRUB_TIMEOUT=' "${GRUB_CONFIG_PATH}"; then
+        sed "s/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=${TIMEOUT_VALUE}/" "${GRUB_CONFIG_PATH}" > "${tmpfile}"
     else
         # Append after GRUB_DEFAULT line, or at end of file
-        cp "${grub_cfg}" "${tmpfile}"
-        echo 'GRUB_TIMEOUT=0' >> "${tmpfile}"
+        cp "${GRUB_CONFIG_PATH}" "${tmpfile}"
+        echo "GRUB_TIMEOUT=${TIMEOUT_VALUE}" >> "${tmpfile}"
     fi
 
     # Also set GRUB_TIMEOUT_STYLE=hidden to suppress the menu entirely
@@ -221,8 +236,8 @@ provision_grub() {
 
     if [[ "${DRY_RUN}" == false ]]; then
         # Atomic replace
-        cp --preserve=mode,ownership "${tmpfile}" "${grub_cfg}"
-        ok "GRUB_TIMEOUT=0 written to ${grub_cfg}"
+        cp --preserve=mode,ownership "${tmpfile}" "${GRUB_CONFIG_PATH}"
+        ok "GRUB_TIMEOUT=${TIMEOUT_VALUE} written to ${GRUB_CONFIG_PATH}"
 
         # Regenerate GRUB boot entries
         info "Running update-grub..."
@@ -231,9 +246,9 @@ provision_grub() {
         fi
         ok "update-grub completed"
     else
-        info "[DRY-RUN] Would write patched GRUB config to ${grub_cfg}"
+        info "[DRY-RUN] Would write patched GRUB config to ${GRUB_CONFIG_PATH}"
         info "[DRY-RUN] Patched content diff:"
-        diff "${grub_cfg}" "${tmpfile}" || true
+        diff "${GRUB_CONFIG_PATH}" "${tmpfile}" || true
         info "[DRY-RUN] Would run: ${update_grub}"
     fi
 }

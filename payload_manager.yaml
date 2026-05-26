@@ -113,6 +113,26 @@ camera:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Bootloader provisioning
+# ─────────────────────────────────────────────────────────────────────────────
+bootloader:
+  # Target bootloader family. The helper script handles the privileged write.
+  target_type: grub
+
+  # GRUB is the default for development hosts; the OBC can switch to uboot.
+  grub_config_path: /etc/default/grub
+
+  # The helper sets timeout/bootdelay to zero for headless autonomous boot.
+  timeout_value: 0
+
+  # The payload manager must be allowed to invoke the narrow sudo helper.
+  allow_elevation: true
+
+  # Installed by install.sh into /opt/dvs/provision_boot.sh.
+  provision_script_path: /opt/dvs/provision_boot.sh
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Logging
 # ─────────────────────────────────────────────────────────────────────────────
 logging:

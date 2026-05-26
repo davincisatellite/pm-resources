@@ -68,6 +68,7 @@ Available commands (see register_*_commands for full list):
   READ_TEMP                — TMP100 temperature in °C
   CAM_CAPTURE              — single-frame capture
   CAM_SWEEP                — full exposure sweep
+    OBC_PROVISION_BOOT       — privileged bootloader provisioning helper
   TELEMETRY_GET            — latest cached sensor readings
   SHUTDOWN                 — graceful stop
 """
@@ -165,6 +166,13 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "inter_exposure_delay_s": 0.5,
         "fallback_device": "/dev/video0",
         "fallback_resolution": "640x480",
+    },
+    "bootloader": {
+        "target_type": "grub",
+        "grub_config_path": "/etc/default/grub",
+        "timeout_value": 0,
+        "allow_elevation": True,
+        "provision_script_path": "/opt/dvs/provision_boot.sh",
     },
     "logging": {
         "level": "INFO",
@@ -1338,6 +1346,7 @@ class PayloadManager:
         )
         register_tmp100_commands(self._dispatcher, self._tmp100, self._telemetry)
         self._dispatcher.register("HEALTH",   self._health_handler)
+        self._dispatcher.register("OBC_PROVISION_BOOT", self._bootloader_provision_handler)
         self._dispatcher.register("SHUTDOWN", self._shutdown_handler)
 
         # ── Worker threads ────────────────────────────────────────────────
@@ -1375,6 +1384,88 @@ class PayloadManager:
         self._log.warning("SHUTDOWN command received via UART")
         threading.Thread(target=self.stop, daemon=True).start()
         return b"OK SHUTTING_DOWN\n"
+
+    def _bootloader_provision_handler(self) -> bytes:
+        """
+        Trigger the narrow privileged helper that provisions GRUB or U-Boot.
+
+        This command intentionally delegates all root work to the dedicated
+        provisioning wrapper so the payload manager never edits bootloader
+        state directly.
+        """
+        boot_cfg = self._cfg.get("bootloader", {})
+        target = str(boot_cfg.get("target_type", "grub")).strip().lower()
+        helper_path = Path(
+            boot_cfg.get("provision_script_path", "/opt/dvs/provision_boot.sh")
+        )
+        grub_config_path = str(
+            boot_cfg.get("grub_config_path", "/etc/default/grub")
+        ).strip()
+        timeout_value = str(boot_cfg.get("timeout_value", 0)).strip()
+
+        if not boot_cfg.get("allow_elevation", False):
+            self._log.warning("Bootloader provisioning refused: elevation disabled")
+            return _err("elevated permissions failed")
+
+        if target not in {"grub", "uboot"}:
+            self._log.error("Bootloader provisioning refused: unknown target %r", target)
+            return _err("unknown target type")
+
+        if not helper_path.exists():
+            self._log.error("Bootloader provisioning helper missing: %s", helper_path)
+            return _err("provisioning helper missing")
+
+        command = ["sudo", "-n", str(helper_path), "--target", target]
+        if target == "grub":
+            command.extend([
+                "--grub-config-path", grub_config_path,
+                "--timeout-value", timeout_value,
+            ])
+        elif timeout_value:
+            command.extend(["--bootdelay-value", timeout_value])
+
+        self._log.info(
+            "Bootloader provisioning requested (target=%s, helper=%s)",
+            target,
+            helper_path,
+        )
+
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except FileNotFoundError:
+            self._log.exception("sudo not available for bootloader provisioning")
+            return _err("elevated permissions failed")
+        except subprocess.TimeoutExpired:
+            self._log.error("Bootloader provisioning timed out: %s", " ".join(command))
+            return _err("provisioning timed out")
+
+        stdout = (result.stdout or "").strip()
+        stderr = (result.stderr or "").strip()
+        if stdout:
+            self._log.info("Bootloader provisioning stdout: %s", stdout)
+        if stderr:
+            self._log.warning("Bootloader provisioning stderr: %s", stderr)
+
+        if result.returncode in (0, 4):
+            if result.returncode == 4:
+                return _ok("BOOT_ALREADY_AUTONOMOUS")
+            return _ok("BOOT_PROVISIONED")
+
+        failure_text = f"rc={result.returncode}"
+        if stderr:
+            failure_text = f"{failure_text} stderr={stderr}"
+
+        if "permission denied" in stderr.lower() or "not allowed" in stderr.lower():
+            self._log.error("Bootloader provisioning permission failure: %s", failure_text)
+            return _err("elevated permissions failed")
+
+        self._log.error("Bootloader provisioning failed: %s", failure_text)
+        return _err("provisioning failed")
 
     # ── Hardware bring-up ─────────────────────────────────────────────────
 

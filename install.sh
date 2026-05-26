@@ -43,6 +43,7 @@ SERVICE_GROUP="debian"
 SRC_PY="${SCRIPT_DIR}/payload_manager.py"
 SRC_YAML="${SCRIPT_DIR}/payload_manager.yaml"
 SRC_SERVICE="${SCRIPT_DIR}/dvs-payload.service"
+SRC_BOOT_PROV="${SCRIPT_DIR}/provision_boot.sh"
 SRC_REQS="${SCRIPT_DIR}/requirements.txt"
 
 # ─── Guard: must be root ───────────────────────────────────────────────────────
@@ -69,7 +70,7 @@ done
 # ═══════════════════════════════════════════════════════════════════════════════
 section "Pre-flight checks"
 
-for src in "${SRC_PY}" "${SRC_YAML}" "${SRC_SERVICE}" "${SRC_REQS}"; do
+for src in "${SRC_PY}" "${SRC_YAML}" "${SRC_SERVICE}" "${SRC_BOOT_PROV}" "${SRC_REQS}"; do
     if [[ ! -f "${src}" ]]; then
         error "Required source file not found: ${src}"
         exit 1
@@ -187,6 +188,21 @@ section "Deploying application files"
     else
         warn "payload_manager.yaml already exists at ${INSTALL_DIR} — skipping to preserve local edits"
         warn "To reset config: sudo cp ${SRC_YAML} ${INSTALL_DIR}/payload_manager.yaml"
+    fi
+
+    install -o root -g root -m 755 \
+        "${SRC_BOOT_PROV}" "${INSTALL_DIR}/provision_boot.sh"
+    ok "Deployed provision_boot.sh"
+
+    SUDOERS_BOOT_PROV="/etc/sudoers.d/dvs-payload-boot"
+    cat > "${SUDOERS_BOOT_PROV}" <<'SUDOERS_EOF'
+debian ALL=(root) NOPASSWD: /opt/dvs/provision_boot.sh
+SUDOERS_EOF
+    chmod 440 "${SUDOERS_BOOT_PROV}"
+    if command -v visudo &>/dev/null && visudo -cf "${SUDOERS_BOOT_PROV}" &>/dev/null; then
+        ok "sudoers rule validated at ${SUDOERS_BOOT_PROV}"
+    else
+        warn "sudoers rule written to ${SUDOERS_BOOT_PROV} (validation tool unavailable or returned warnings)"
     fi
 }
 
@@ -335,6 +351,7 @@ _check() {
 # File existence
 _check "payload_manager.py deployed"    test -f "${INSTALL_DIR}/payload_manager.py"
 _check "payload_manager.yaml present"   test -f "${INSTALL_DIR}/payload_manager.yaml"
+_check "provision_boot.sh deployed"     test -x "${INSTALL_DIR}/provision_boot.sh"
 _check "Service unit installed"         test -f "${SERVICE_FILE}"
 _check "logrotate config present"       test -f "${LOGROTATE_CONF}"
 _check "Log file exists"                test -f "${LOG_FILE}"

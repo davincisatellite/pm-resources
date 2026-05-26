@@ -109,8 +109,10 @@ ReadWritePaths=/opt/dvs /opt/dicepayload /var/log
 # Block writes to /home and /root.
 ProtectHome=read-only
 
-# Prevent the process from acquiring new privileges via setuid/setgid.
-NoNewPrivileges=true
+# The bootloader provisioning command shells out to a sudo-scoped helper.
+# Leave this false so the helper can elevate only through the narrow sudoers
+# rule installed alongside the payload manager.
+NoNewPrivileges=false
 
 # Drop all Linux capabilities except those needed for I2C/UART access.
 # The 'debian' user already has access to /dev/i2c-* and /dev/ttyS* via
