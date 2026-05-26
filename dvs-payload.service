@@ -1,0 +1,131 @@
+# /etc/systemd/system/dvs-payload.service
+# ─────────────────────────────────────────────────────────────────────────────
+# DVS Da Vinci Satellite — Payload Manager service unit
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Install:  sudo cp dvs-payload.service /etc/systemd/system/
+#           sudo systemctl daemon-reload
+#           sudo systemctl enable --now dvs-payload.service
+#
+# Logs:     journalctl -u dvs-payload.service -f
+#           tail -f /var/log/payload_manager.log
+
+[Unit]
+Description=DVS Da Vinci Satellite Payload Manager
+Documentation=file:///opt/dvs/README.md
+
+# ── Boot ordering ────────────────────────────────────────────────────────────
+# Wait for the local filesystem (so /opt/dvs and /var/log are mounted) and
+# for udev to settle (so I2C and UART devices exist in /dev).
+# We intentionally do NOT depend on network-online.target — the payload
+# manager has zero network functionality.
+After=local-fs.target
+After=systemd-udev-settle.service
+Wants=systemd-udev-settle.service
+
+# Restart any dependent unit that needs the payload to be running first.
+# (Uncomment and add unit names here if other services depend on this one.)
+# Before=some-other.service
+
+# ── Failure / dependency behaviour ───────────────────────────────────────────
+# Do not treat the unit as failed just because a hardware device is absent at
+# boot — the Python code handles missing hardware gracefully and will retry.
+# StartLimitIntervalSec / StartLimitBurst: allow up to 5 rapid restarts within
+# 60 s before systemd stops trying (prevents reboot loops from a hard bug).
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+
+[Service]
+# ── Identity ─────────────────────────────────────────────────────────────────
+Type=simple
+User=debian
+Group=debian
+
+# ── Paths ────────────────────────────────────────────────────────────────────
+WorkingDirectory=/opt/dvs
+ExecStart=/usr/bin/python3 /opt/dvs/payload_manager.py \
+    --config /opt/dvs/payload_manager.yaml
+
+# ── Clean shutdown ────────────────────────────────────────────────────────────
+# Send SIGTERM first; payload_manager.py catches it and calls pm.stop().
+# If the process is still alive after 15 s, escalate to SIGKILL.
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=15
+
+# ── Restart policy ────────────────────────────────────────────────────────────
+# Restart on any non-clean exit (crash, OOM, signal) but NOT on a clean
+# exit (exit code 0) or on explicit systemctl stop.
+Restart=on-failure
+RestartSec=10
+# After StartLimitBurst restarts within StartLimitIntervalSec, stop retrying.
+# This prevents infinite rapid-restart loops from a permanent bug.
+
+# ── Environment ───────────────────────────────────────────────────────────────
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+# Uncomment to load secrets / deployment-specific overrides:
+# EnvironmentFile=/etc/dvs/payload_manager.env
+
+# ── Standard I/O ──────────────────────────────────────────────────────────────
+# Both stdout and stderr go to the systemd journal, tagged with the identifier
+# "dvs-payload" for easy filtering:  journalctl -t dvs-payload
+# payload_manager.py writes its own rotating file log independently.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=dvs-payload
+
+# Suppress DEBUG lines in the journal (they are still written to the file log).
+# One of: emerg alert crit err warning notice info debug
+LogLevelMax=info
+
+# ── Resource limits ───────────────────────────────────────────────────────────
+# Prevent a runaway process from starving the OBC of memory.
+# 256 MB is generous for this workload; tighten after profiling.
+MemoryMax=256M
+MemorySwapMax=0          # No swap — flight hardware typically has none.
+
+# Limit CPU to 75 % of one core so the OBC remains responsive for the kernel
+# and other critical tasks.
+CPUQuota=75%
+
+# Raise the open-file limit to handle serial + I2C + log file descriptors.
+LimitNOFILE=1024
+
+# ── Security hardening ────────────────────────────────────────────────────────
+# Principle of least privilege: restrict what the process can see and do.
+
+# Give the process its own private /tmp (prevents /tmp exhaustion attacks).
+PrivateTmp=true
+
+# Mount /usr, /boot, /etc as read-only inside the service's namespace.
+# The process can still write to /opt/dvs and /var/log via bind mounts.
+ProtectSystem=strict
+
+# Bind-mount only the specific writable paths the process needs.
+ReadWritePaths=/opt/dvs /opt/dicepayload /var/log
+
+# Block writes to /home and /root.
+ProtectHome=read-only
+
+# Prevent the process from acquiring new privileges via setuid/setgid.
+NoNewPrivileges=true
+
+# Drop all Linux capabilities except those needed for I2C/UART access.
+# The 'debian' user already has access to /dev/i2c-* and /dev/ttyS* via
+# the i2c and dialout groups — no capabilities are needed.
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# Restrict the set of syscalls the process can make to a safe subset.
+# "~" prefix means "deny all listed"; "@" groups are systemd-defined sets.
+# Keep this conservative: Python + smbus2 + pyserial + opencv needs:
+#   @basic-io, @file-system, @io-event, @ipc, @network-io (for select()),
+#   @process, @signal, @timer  — deny the rest.
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+
+[Install]
+WantedBy=multi-user.target

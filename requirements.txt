@@ -1,0 +1,21 @@
+# DVS Payload Manager — Python dependencies
+#
+# Install on the OBC (Ubuntu/Debian):
+#   pip3 install -r requirements.txt
+#
+# System packages also required (apt-get):
+#   sudo apt-get install python3-smbus fswebcam
+#   (smbus2 below is a pure-Python alternative that works without apt)
+
+# UART / serial communication
+pyserial>=3.5
+
+# I2C bus access (pure Python, works alongside the system python3-smbus)
+smbus2>=0.4.1
+
+# YAML configuration file parsing
+PyYAML>=6.0
+
+# Camera capture (optional — falls back to fswebcam if not installed)
+# Comment this out if running on a minimal image without USB camera support.
+opencv-python>=4.5.0

@@ -1,0 +1,136 @@
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  DVS Da Vinci Satellite — Payload Manager Runtime Configuration         ║
+# ║  Target: Ubuntu/Debian ARM (Hyperion OBC)                               ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+#
+# All keys here override the built-in defaults in payload_manager.py.
+# Any key you remove will silently revert to its default value.
+#
+# After editing, restart the service:
+#   sudo systemctl restart payload-manager.service
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# UART / Serial interface (OBC UART0)
+# ─────────────────────────────────────────────────────────────────────────────
+serial:
+  port: /dev/ttyS0          # UART0 on the Hyperion OBC Debian image
+  baud_rate: 115200
+  read_timeout_s: 1.0       # select() timeout per loop iteration
+  reconnect_delay_s: 5.0    # seconds to wait before retrying a failed open()
+  encoding: utf-8
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DICE payload — Arduino I2C controller
+# ─────────────────────────────────────────────────────────────────────────────
+dice:
+  i2c_bus: 1
+
+  # ⚠️  Address TBD — confirm from "Payload i2c bus address space.xlsx"
+  #     before flight.  Current placeholder is 0x08.
+  i2c_address: 0x08
+
+  # Time the Pi waits after writing a command before reading the response.
+  # Increase if the Arduino is slow to prepare the 4-byte reply.
+  response_delay_s: 0.010     # 10 ms
+
+  # Delay inserted between individual byte reads in the fallback read path.
+  byte_read_delay_s: 0.001    # 1 ms
+
+  # Maximum seconds wait_until_ready() blocks before declaring a timeout.
+  status_timeout_s: 10.0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TMP100 temperature sensor
+# ─────────────────────────────────────────────────────────────────────────────
+tmp100:
+  i2c_bus: 1
+  i2c_address: 0x4F           # Fixed address for our hardware configuration
+
+  # How often the TelemetryWorker thread polls the sensor (seconds).
+  poll_interval_s: 30.0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# IMX179 USB camera (Sony 8 MP)
+# ─────────────────────────────────────────────────────────────────────────────
+camera:
+  device_index: 0             # Linux /dev/video0 → OpenCV index 0
+
+  resolution:
+    width: 3264               # 8 MP native horizontal pixels
+    height: 2448              # 8 MP native vertical pixels
+    # Alternatives (comment out the above and uncomment one):
+    # width: 1920             # 1080p
+    # height: 1080
+    # width: 1280             # 720p
+    # height: 720
+
+  fps: 30
+
+  # How many times to retry cv2.VideoCapture() before giving up at boot.
+  connect_retries: 15
+  connect_retry_delay_s: 2.0
+
+  # Directory where captured images are written.
+  # Must be writable by the process user (debian).
+  output_dir: /opt/dicepayload/output
+
+  # Exposure values used by CAM_SWEEP and DICE_SEQUENCE.
+  # Each value is passed to cv2.CAP_PROP_EXPOSURE.
+  exposure_sweep:
+    - -10
+    - -9
+    - -8
+    - -7
+    - -6
+    - -5
+    - -4
+    - -3
+    - -2
+    - -1
+    - 0
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+    - 7
+    - 8
+    - 9
+    - 10
+    - 20
+
+  # Settle time between setting a new exposure and capturing the frame.
+  inter_exposure_delay_s: 0.5
+
+  # Fallback for single-shot capture when opencv-python is not installed.
+  fallback_device: /dev/video0
+  fallback_resolution: "640x480"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Logging
+# ─────────────────────────────────────────────────────────────────────────────
+logging:
+  # One of: DEBUG | INFO | WARNING | ERROR
+  level: INFO
+
+  # Rotating log file (10 MB × 5 = 50 MB max on disk).
+  file: /var/log/payload_manager.log
+  max_bytes: 10485760         # 10 MB
+  backup_count: 5
+
+  # Also print to stdout (captured by journald when run as a systemd service).
+  console: true
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Watchdog / health monitor
+# ─────────────────────────────────────────────────────────────────────────────
+health_monitor:
+  # How often the main loop runs a health check and attempts driver recovery.
+  check_interval_s: 60.0
