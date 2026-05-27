@@ -1,0 +1,30 @@
+# /etc/sudoers.d/dvs-provision
+# ─────────────────────────────────────────────────────────────────────────────
+# DVS Da Vinci Satellite — Narrow sudoers rule for bootloader provisioning
+#
+# INSTALL
+#   sudo cp dvs-provision /etc/sudoers.d/dvs-provision
+#   sudo chmod 440 /etc/sudoers.d/dvs-provision
+#   sudo visudo -c   # syntax check — ALWAYS run this after any sudoers edit
+#
+# PURPOSE
+#   Grants the 'debian' service user passwordless sudo rights for EXACTLY
+#   ONE binary: /opt/dvs/provision_boot.sh.
+#
+#   This is the minimal elevation needed for OBC_PROVISION_BOOT to function.
+#   The script itself handles all bootloader writes (fw_setenv / update-grub)
+#   inside a single auditable shell script rather than allowing arbitrary
+#   sudo access to update-grub or fw_setenv directly.
+#
+# SECURITY NOTES
+#   • The rule is scoped to the exact absolute path — any other binary,
+#     including a symlink pointing elsewhere, will be denied.
+#   • provision_boot.sh is deployed root:root 755 by install.sh, so the
+#     debian user cannot modify it to escalate further.
+#   • To enable OBC_PROVISION_BOOT in payload_manager.yaml you must BOTH
+#     install this file AND set allow_elevation: true in the config.
+#   • Audit all sudo invocations with: journalctl _COMM=sudo -u debian
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Syntax: user  hosts=(runas:group)  NOPASSWD: command
+debian ALL=(root:root) NOPASSWD: /opt/dvs/provision_boot.sh

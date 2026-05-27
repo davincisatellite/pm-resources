@@ -150,7 +150,12 @@ section "System packages"
 section "Python packages"
 [[ "${VERIFY_ONLY}" == true ]] && { info "Skipping (--verify mode)"; } || {
 
-    "${PYTHON3}" -m pip install --quiet --break-system-packages \
+    PIP_EXTRA_ARGS=()
+    if "${PYTHON3}" -m pip install --help 2>&1 | grep -q -- '--break-system-packages'; then
+        PIP_EXTRA_ARGS+=(--break-system-packages)
+    fi
+
+    "${PYTHON3}" -m pip install --quiet "${PIP_EXTRA_ARGS[@]}" \
         -r "${SRC_REQS}"
     ok "Python packages installed from requirements.txt"
 

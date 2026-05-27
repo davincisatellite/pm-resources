@@ -117,16 +117,21 @@ camera:
 # ─────────────────────────────────────────────────────────────────────────────
 bootloader:
   # Target bootloader family. The helper script handles the privileged write.
-  target_type: grub
+  # "uboot"  — SAMA5D2 / Hyperion OBC (flight default; uses fw_setenv)
+  # "grub"   — x86 development hosts only (uses update-grub)
+  target_type: uboot
 
-  # GRUB is the default for development hosts; the OBC can switch to uboot.
+  # Path to GRUB config — only relevant when target_type is "grub".
   grub_config_path: /etc/default/grub
 
-  # The helper sets timeout/bootdelay to zero for headless autonomous boot.
+  # Bootdelay / timeout value written to the bootloader (0 = no pause).
   timeout_value: 0
 
-  # The payload manager must be allowed to invoke the narrow sudo helper.
-  allow_elevation: true
+  # SAFETY GATE: Must be explicitly set to true AND the sudoers drop-in
+  # (sudoers.d/dvs-provision) must be installed before this command works.
+  # Defaults to false so a fresh deploy cannot accidentally provision the
+  # bootloader without deliberate operator action.
+  allow_elevation: false
 
   # Installed by install.sh into /opt/dvs/provision_boot.sh.
   provision_script_path: /opt/dvs/provision_boot.sh
